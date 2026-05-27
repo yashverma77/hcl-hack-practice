@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, jsonify
 import psutil
 from datetime import datetime
 
@@ -22,7 +22,7 @@ def home():
 
         <h1>AWS Cloud Monitoring Dashboard</h1>
 
-        <h2>Server Health</h2>
+        <h2>EC2 Server Health</h2>
 
         <p><b>CPU Usage:</b> {cpu}%</p>
 
@@ -30,7 +30,7 @@ def home():
 
         <p><b>Disk Usage:</b> {disk}%</p>
 
-        <p><b>Updated:</b> {datetime.now()}</p>
+        <p><b>Updated:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
 
         <p style="color:green;"><b>Status: Healthy</b></p>
 
@@ -40,6 +40,18 @@ def home():
 
 @app.route("/health")
 def health():
-    return "System healthy"
 
-app.run(host="0.0.0.0", port=5000)
+    cpu = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory().percent
+    disk = psutil.disk_usage("/").percent
+
+    return jsonify({
+        "status": "healthy",
+        "cpu": cpu,
+        "memory": memory,
+        "disk": disk,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
