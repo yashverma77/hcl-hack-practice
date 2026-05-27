@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Monitor VPC with public/private subnet and EC2
+
+Resources:
+
+# ------------------------
+# VPC
+# ------------------------
+
+  MonitorVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+
+      CidrBlock: 10.0.0.0/16
+
+      EnableDnsSupport: true
+
+      EnableDnsHostnames: true
+
+      Tags:
+        - Key: Name
+          Value: monitor-vpc
+
+# ------------------------
+# Internet Gateway
+# ------------------------
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+
+      Tags:
+        - Key: Name
+          Value: monitor-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+
+      VpcId: !Ref MonitorVPC
+
+      InternetGatewayId: !Ref InternetGateway
+
+# ------------------------
+# Public subnet
+# ------------------------
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+
+      VpcId: !Ref MonitorVPC
+
+      CidrBlock: 10.0.1.0/24
+
+      MapPublicIpOnLaunch: true
+
+      AvailabilityZone: ap-south-1a
+
+      Tags:
+        - Key: Name
+          Value: monitor-public-subnet
+
+# ------------------------
+# Private subnet
+# ------------------------
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+
+      VpcId: !Ref MonitorVPC
+
+      CidrBlock: 10.0.2.0/24
+
+      MapPublicIpOnLaunch: false
+
+      AvailabilityZone: ap-south-1a
+
+      Tags:
+        - Key: Name
+          Value: monitor-private-subnet
+
+# ------------------------
+# Route table public
+# ------------------------
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+
+      VpcId: !Ref MonitorVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+
+      RouteTableId: !Ref PublicRouteTable
+
+      DestinationCidrBlock: 0.0.0.0/0
+
+      GatewayId: !Ref InternetGateway
+
+  PublicAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+
+      RouteTableId: !Ref PublicRouteTable
+
+      SubnetId: !Ref PublicSubnet
+
+# ------------------------
+# Private route table
+# ------------------------
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+
+      VpcId: !Ref MonitorVPC
+
+  PrivateAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+
+      RouteTableId: !Ref PrivateRouteTable
+
+      SubnetId: !Ref PrivateSubnet
+
+# ------------------------
+# Security group
+# ------------------------
+
+  MonitorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+
+      GroupDescription: Allow SSH and Flask
+
+      VpcId: !Ref MonitorVPC
+
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+
+# ------------------------
+# IAM role
+# ------------------------
+
+  ECRRole:
+    Type: AWS::IAM::Role
+    Properties:
+
+      RoleName: monitor-ecr-role
+
+      AssumeRolePolicyDocument:
+
+        Version: '2012-10-17'
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+# ------------------------
+# Instance profile
+# ------------------------
+
+  ECRInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+
+      Roles:
+        - !Ref ECRRole
+
+# ------------------------
+# EC2
+# ------------------------
+
+  MonitorEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+
+      InstanceType: t2.micro
+
+      KeyName: moniter-key
+
+      ImageId: ami-0f5ee92e2d63afc18
+
+      SubnetId: !Ref PublicSubnet
+
+      SecurityGroupIds:
+        - !Ref MonitorSecurityGroup
+
+      IamInstanceProfile: !Ref ECRInstanceProfile
+
+      Tags:
+        - Key: Name
+          Value: monitor-machine
+
+      UserData:
+        Fn::Base64: !Sub |
+
+          #!/bin/bash
+
+          apt update -y
+
+          apt install docker.io awscli -y
+
+          systemctl start docker
+
+          systemctl enable docker
+
+          aws ecr get-login-password --region ap-south-1 \
+          | docker login --username AWS \
+          --password-stdin 208194581278.dkr.ecr.ap-south-1.amazonaws.com
+
+          docker pull 208194581278.dkr.ecr.ap-south-1.amazonaws.com/monitor-app
+
+          docker run -d -p 5000:5000 \
+          --name monitor-app \
+          208194581278.dkr.ecr.ap-south-1.amazonaws.com/monitor-app
+
+# ------------------------
+# Outputs
+# ------------------------
+
+Outputs:
+
+  VPCId:
+    Value: !Ref MonitorVPC
+
+  PublicSubnetId:
+    Value: !Ref PublicSubnet
+
+  PrivateSubnetId:
+    Value: !Ref PrivateSubnet
+
+  InstancePublicIP:
+    Value: !GetAtt MonitorEC2.PublicIp
